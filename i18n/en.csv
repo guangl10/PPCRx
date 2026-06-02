@@ -1,0 +1,53 @@
+key,value
+app_title,PPC-Rx | Prescription Exercise
+landing_title,Who is using PPC-Rx today?
+landing_subtitle,Choose your role to continue.
+landing_at,Athletic Trainer
+landing_at_desc,Clinical mode - full screening and prescription
+landing_parent,Parent
+landing_parent_desc,Simple mode - daily heart rate guidance
+landing_athlete,Athlete
+landing_athlete_desc,Simple mode - daily heart rate guidance
+nav_profile,Profile
+nav_prescription,Prescription
+nav_progress,Progress
+lbl_age,Age (years)
+lbl_days_post_injury,Days post-injury
+lbl_vestibular,Vestibular symptoms
+lbl_cervical,Cervical symptoms
+lbl_vision,Vision symptoms
+lbl_hrst,HR at symptom threshold (HRST, optional)
+lbl_sessions_completed,Sessions completed
+lbl_last_session_worse,Symptoms worse after last session
+lbl_current_pcss,Current PCSS
+lbl_previous_pcss,Previous PCSS
+lbl_current_hr,Current session HR (bpm)
+lbl_current_duration,Current session duration (min)
+btn_calculate,Run screen / prescribe / track
+btn_reset,Reset
+btn_back_landing,Back to role selection
+card_screen,Screening (screen_ppcs)
+card_target_hr,Target heart rate
+card_prescription,Prescription (prescribe_ppcs)
+card_track,Progress (track_progress)
+fuse_title,Safety fuse (PCSS)
+fuse_ok,Within safe limits
+fuse_tripped,FUSE TRIPPED - session stopped
+fuse_hint,Fuse trips when current PCSS minus previous PCSS is 2 or more.
+disclaimer,For educational use only. Not a medical device.
+unit_bpm,bpm
+rx_locked,Next prescription locked until PCSS stabilizes.
+screen_fail,Screening status is not eligible - prescription withheld.
+placeholder,-
+simple_prompt,Fill in the form and click Run to get your prescription.
+simple_ready,Ready
+simple_not_today,Not today
+simple_keep_below,Keep heart rate below %d bpm. Stop if symptoms worsen.
+guide_step1,Profile: Enter age, days post-injury, and symptom flags.
+guide_step2,Prescription and Progress: Enter HRST (if available), today's PCSS, session HR/duration, and RPE.
+guide_step3,Calculate: Review screening and target HR; copy messages to parent/athlete or download PDF/CSV.
+send_to_fuse_hint,Safety fuse active. Messages below are rest-day safety notices (not exercise prescriptions).
+btn_copy_parent_safety,Copy Parent Safety Notice
+btn_copy_athlete_safety,Copy Athlete Safety Notice
+btn_copy_parent_rx,Copy Parent Message
+btn_copy_athlete_rx,Copy Athlete Message

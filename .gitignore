@@ -1,0 +1,8 @@
+samples/
+e2e_reports/
+*.png
+.Rhistory
+.RData
+node_modules/
+run_8_scenarios.R
+test_v02.R

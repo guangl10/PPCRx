@@ -1,0 +1,46 @@
+---
+params:
+  date_str: ""
+  target_hr: 0
+  method: ""
+  duration_min: 0
+  frequency_per_week: 0
+  clinical_note: ""
+  safety_warning: ""
+  evidence_grade: "LOW"
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    keep_tex: false
+geometry: margin=2cm
+header-includes:
+  - \usepackage{helvet}
+  - \renewcommand{\familydefault}{\sfdefault}
+  - \usepackage{xcolor}
+  - \definecolor{ppchdr}{HTML}{0d6efd}
+---
+
+\vspace{0.5cm}
+
+**Date:** `r params$date_str`
+
+## Target heart rate
+
+# `r params$target_hr` bpm
+
+**Method:** `r params$method`
+
+| | |
+|---|---|
+| **Duration** | `r params$duration_min` min per session |
+| **Frequency** | `r params$frequency_per_week` sessions per week |
+
+**Clinical note:** `r params$clinical_note`
+
+**Safety warning:** `r params$safety_warning`
+
+**Evidence:** GRADE `r params$evidence_grade` — this recommendation reflects low-certainty evidence from observational and pilot data.
+
+\vfill
+
+\small Li G. (2026). doi.org/10.17605/OSF.IO/KVUF6 | This tool does not replace clinical judgment.
