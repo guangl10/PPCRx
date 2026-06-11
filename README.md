@@ -1,5 +1,7 @@
 # PPCSexRx Shiny App
 
+Browser-based clinical tool for athletic trainers (PPCS / SSTAE). Algorithm logic lives in the CRAN package **[PPCSexRx](https://github.com/guangl10/PPCSexRx)**; this repo is the Shiny UI only.
+
 ## Mission
 
 Provide athletic trainers a browser-based tool to screen adolescents with persistent post-concussion symptoms (PPCS), prescribe sub-symptom threshold aerobic exercise (SSTAE), track sessions, and communicate plans to parents and athletes—without storing patient data on the server.
@@ -60,7 +62,7 @@ Appends one row to the session log when current HR and duration are provided.
 
 **Package log fields:** `date`, `pcss`, `target_hr`, `achieved_hr`, `duration_min`, `symptoms_worsened`.
 
-**App-extended fields (v0.2):** `rpe`, `symptom_onset_min`, `post_symptom_severity`.
+**App-extended fields (v0.2):** `rpe`, `symptom_onset_min`.
 
 ### Safety fuse
 
@@ -85,12 +87,11 @@ If `current_pcss - previous_pcss >= 2`, fuse trips: next prescription locked; tr
 | `duration_min` | integer | minutes | Session duration |
 | `symptoms_worsened` | logical | TRUE/FALSE | Worse vs prior session |
 | `rpe` | numeric | 6–20 | Borg RPE (optional) |
-| `symptom_onset_min` | numeric | 0–20 | Minute symptoms began; 20 = full session |
-| `post_symptom_severity` | integer | 0/1/2 | 0 none; 1 resolved ≤30 min; 2 persisted >30 min |
+| `symptom_onset_min` | numeric | 0–20 | Symptom onset bucket (20 = full session) |
 
 ### Backward compatibility
 
-v0.1 CSVs with only the six required columns load successfully. Missing optional columns are added as `NA`. Export always writes all nine columns.
+v0.1 CSVs with only the six required columns load successfully. Missing optional columns are added as `NA`. Legacy columns such as `post_symptom_severity` are ignored on import. Export always writes all eight columns.
 
 ## File Structure
 
@@ -121,34 +122,31 @@ v0.1 CSVs with only the six required columns load successfully. Missing optional
 ### v0.2
 
 - Removed landing page; **AT-only** clinical UI
-- Session log: `rpe`, `symptom_onset_min`, `post_symptom_severity`
+- PCSS symptom picker (SCAT6-aligned); previous PCSS auto-loaded from session log
+- Session log: `rpe`, `symptom_onset_min` (8 CSV columns)
+- SOAP/DAP clinical note PDF export (auto-switch by log length)
 - Analytics panel (≥2 log rows): PCSS + onset plotly charts
-- Bayesian prescription guidance (conjugate prior)
-- Copy-to-clipboard parent/athlete messages
-- **Safety fuse:** copy buttons stay enabled; message switches to rest-day safety notice (not prescription)
-- **Quick start** three-step guide at top of main panel
+- Bayesian prescription guidance (conjugate prior; BCTT prior 0.3, no-BCTT 0.2 pts/day)
+- Copy-to-clipboard parent/athlete messages (ASCII-safe)
+- **Safety fuse:** PCSS delta ≥ 2 locks prescription; copy switches to safety notice
+- **Calculate guard:** same session date replaces last log row (no duplicate rows)
+- HTTPS via `https://guanglab.org/ppcrx/`
 - Backward compatible with v0.1 CSVs
 
 ## Deployment
 
-- **Server:** Oracle Cloud ARM
-- **URL:** http://132.226.153.186:3838/
-- **App directory:** `/srv/shiny-server/PPCSexRx`
-- **Run (manual):**
+**Public app URL:** https://guanglab.org/ppcrx/
 
-```bash
-cd /srv/shiny-server/PPCSexRx
-R -e "setwd('/srv/shiny-server/PPCSexRx'); shiny::runApp(host='0.0.0.0', port=3838)"
-```
+| Repo | URL | Contents |
+|------|-----|----------|
+| **PPCRx** (this app) | https://github.com/guangl10/PPCRx | Shiny UI |
+| **PPCSexRx** (CRAN) | https://github.com/guangl10/PPCSexRx | R package algorithms |
 
-- **systemd:**
+License: **MIT** on both repos.
 
-```bash
-sudo systemctl restart ppcsexrx-shiny.service
-sudo systemctl status ppcsexrx-shiny.service
-```
+Nginx path proxy example: `deploy/nginx-ppcsexrx-guanglab.conf`.
 
-- **guanglab.org:** Research page card “Launch PPCSexRx App →” and navbar “Clinical Tool” → same Shiny URL.
+**Server ops (Deploy Key, IP, rsync, systemd):** see `deploy/ORACLE_PRIVATE.md` on the Oracle host only — that file is **gitignored** and must not be committed to this public repo. Template: `deploy/ORACLE_PRIVATE.example.md`.
 
 ## Known Limitations
 
@@ -156,7 +154,7 @@ sudo systemctl status ppcsexrx-shiny.service
 - Age-predicted fallback uses package defaults (60–70% HRmax), not a fixed 65% formula.
 - `symptom_onset_min` depends on self-report accuracy.
 - Bayesian guidance not prospectively validated.
-- Plotly requires user R library `~/R/library` on this server if system library is not writable.
+- Plotly may require a user-writable R library path on restricted hosts.
 
 ## What NOT to do (lessons learned)
 
@@ -166,6 +164,7 @@ sudo systemctl status ppcsexrx-shiny.service
 - Do **not** activate `AL_HOOK` without IRB approval.
 - Do **not** duplicate PPCSexRx algorithm code in Shiny.
 - Do **not** use emoji, HTML, or Unicode bullets in parent/athlete messages (SMS/WeChat safety).
+- Do **not** commit Deploy Keys, server IPs, or internal paths to this public repo (use `deploy/ORACLE_PRIVATE.md`, gitignored).
 
 ## Future Roadmap
 

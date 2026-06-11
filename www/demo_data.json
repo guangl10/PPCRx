@@ -1,0 +1,43 @@
+{
+  "dataset1_fast": {
+    "label": "Demo: Fast Recovery (Kurowski-style)",
+    "data": [
+      {"date":"2026-05-01","pcss":28,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":13,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-02","pcss":26,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":12,"symptom_onset_min":12,"post_symptom_severity":1},
+      {"date":"2026-05-05","pcss":24,"target_hr":128,"achieved_hr":128,"duration_min":20,"symptoms_worsened":false,"rpe":13,"symptom_onset_min":14,"post_symptom_severity":0},
+      {"date":"2026-05-06","pcss":22,"target_hr":128,"achieved_hr":128,"duration_min":20,"symptoms_worsened":false,"rpe":12,"symptom_onset_min":15,"post_symptom_severity":0},
+      {"date":"2026-05-07","pcss":20,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":12,"symptom_onset_min":16,"post_symptom_severity":0},
+      {"date":"2026-05-08","pcss":18,"target_hr":128,"achieved_hr":128,"duration_min":20,"symptoms_worsened":false,"rpe":11,"symptom_onset_min":17,"post_symptom_severity":0},
+      {"date":"2026-05-09","pcss":16,"target_hr":128,"achieved_hr":128,"duration_min":20,"symptoms_worsened":false,"rpe":12,"symptom_onset_min":18,"post_symptom_severity":0},
+      {"date":"2026-05-12","pcss":14,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":11,"symptom_onset_min":19,"post_symptom_severity":0},
+      {"date":"2026-05-13","pcss":12,"target_hr":128,"achieved_hr":128,"duration_min":20,"symptoms_worsened":false,"rpe":11,"symptom_onset_min":20,"post_symptom_severity":0},
+      {"date":"2026-05-14","pcss":10,"target_hr":128,"achieved_hr":128,"duration_min":20,"symptoms_worsened":false,"rpe":10,"symptom_onset_min":20,"post_symptom_severity":0}
+    ]
+  },
+  "dataset2_plateau": {
+    "label": "Demo: Plateau + RPE Rising (Gladstone-style)",
+    "data": [
+      {"date":"2026-05-01","pcss":28,"target_hr":128,"achieved_hr":125,"duration_min":20,"symptoms_worsened":false,"rpe":13,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-02","pcss":27,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":13,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-05","pcss":27,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":14,"symptom_onset_min":11,"post_symptom_severity":1},
+      {"date":"2026-05-06","pcss":26,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":14,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-07","pcss":26,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":15,"symptom_onset_min":11,"post_symptom_severity":1},
+      {"date":"2026-05-08","pcss":25,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":15,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-09","pcss":25,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":16,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-12","pcss":24,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":16,"symptom_onset_min":11,"post_symptom_severity":1}
+    ]
+  },
+  "dataset3_breakthrough": {
+    "label": "Demo: Plateau Breakthrough (HR adjusted at session 5)",
+    "data": [
+      {"date":"2026-05-01","pcss":28,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":14,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-02","pcss":28,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":15,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-05","pcss":27,"target_hr":128,"achieved_hr":127,"duration_min":20,"symptoms_worsened":false,"rpe":15,"symptom_onset_min":11,"post_symptom_severity":1},
+      {"date":"2026-05-06","pcss":27,"target_hr":128,"achieved_hr":126,"duration_min":20,"symptoms_worsened":false,"rpe":16,"symptom_onset_min":10,"post_symptom_severity":1},
+      {"date":"2026-05-07","pcss":25,"target_hr":120,"achieved_hr":119,"duration_min":20,"symptoms_worsened":false,"rpe":13,"symptom_onset_min":13,"post_symptom_severity":0},
+      {"date":"2026-05-08","pcss":23,"target_hr":120,"achieved_hr":120,"duration_min":20,"symptoms_worsened":false,"rpe":12,"symptom_onset_min":15,"post_symptom_severity":0},
+      {"date":"2026-05-09","pcss":21,"target_hr":123,"achieved_hr":122,"duration_min":20,"symptoms_worsened":false,"rpe":12,"symptom_onset_min":17,"post_symptom_severity":0},
+      {"date":"2026-05-12","pcss":19,"target_hr":125,"achieved_hr":124,"duration_min":20,"symptoms_worsened":false,"rpe":11,"symptom_onset_min":18,"post_symptom_severity":0}
+    ]
+  }
+}

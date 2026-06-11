@@ -5,4 +5,4 @@ e2e_reports/
 .RData
 node_modules/
 run_8_scenarios.R
-test_v02.R
+deploy/ORACLE_PRIVATE.md

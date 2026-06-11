@@ -7,8 +7,7 @@ LOG_COLS_REQUIRED <- c(
 
 LOG_COLS_OPTIONAL <- c(
   "rpe",
-  "symptom_onset_min",
-  "post_symptom_severity"
+  "symptom_onset_min"
 )
 
 LOG_COLS <- c(LOG_COLS_REQUIRED, LOG_COLS_OPTIONAL)
@@ -110,8 +109,28 @@ ensure_log_schema <- function(df) {
   }
   df$rpe <- suppressWarnings(as.numeric(df$rpe))
   df$symptom_onset_min <- suppressWarnings(as.numeric(df$symptom_onset_min))
-  df$post_symptom_severity <- suppressWarnings(as.integer(df$post_symptom_severity))
-  df
+  sort_log_by_date(df)
+}
+
+sort_log_by_date <- function(df) {
+  if (is.null(df) || !is.data.frame(df) || nrow(df) < 2L) {
+    return(df)
+  }
+  ord <- order(as.Date(df$date))
+  df[ord, , drop = FALSE]
+}
+
+format_session_date <- function(session_date) {
+  format(as.Date(session_date), "%Y-%m-%d")
+}
+
+apply_session_date_to_last_row <- function(log_df, session_date) {
+  log_df <- ensure_log_schema(log_df)
+  if (is.null(log_df) || nrow(log_df) == 0L) {
+    return(log_df)
+  }
+  log_df$date[nrow(log_df)] <- format_session_date(session_date)
+  sort_log_by_date(log_df)
 }
 
 normalize_session_log <- function(df) {
@@ -122,7 +141,11 @@ normalize_session_log <- function(df) {
   if (length(miss)) {
     stop("CSV missing required columns: ", paste(miss, collapse = ", "), call. = FALSE)
   }
-  ensure_log_schema(df)
+  df <- ensure_log_schema(df)
+  if (any(!nzchar(df$date)) || any(is.na(as.Date(df$date)))) {
+    stop("Session log requires a valid date (yyyy-mm-dd) on every row.", call. = FALSE)
+  }
+  df
 }
 
 progress_inputs_valid <- function(current_hr, current_duration) {
@@ -132,18 +155,15 @@ progress_inputs_valid <- function(current_hr, current_duration) {
     !is.na(hr) && !is.na(dur) && hr > 0 && dur > 0
 }
 
-resolve_symptom_onset_min <- function(full_session, symptom_onset_min) {
-  if (isTRUE(full_session)) {
-    return(20L)
-  }
-  v <- suppressWarnings(as.numeric(symptom_onset_min))
+resolve_symptom_onset_min <- function(symptom_onset_range) {
+  v <- suppressWarnings(as.numeric(symptom_onset_range))
   if (length(v) == 0L || is.na(v)) {
     return(NA_integer_)
   }
   as.integer(v)
 }
 
-append_v02_fields <- function(log_df, rpe, symptom_onset_min, post_symptom_severity) {
+append_v02_fields <- function(log_df, rpe, symptom_onset_min) {
   log_df <- ensure_log_schema(log_df)
   n <- nrow(log_df)
   if (n == 0L) {
@@ -151,7 +171,6 @@ append_v02_fields <- function(log_df, rpe, symptom_onset_min, post_symptom_sever
   }
   log_df$rpe[n] <- suppressWarnings(as.numeric(rpe))
   log_df$symptom_onset_min[n] <- symptom_onset_min
-  log_df$post_symptom_severity[n] <- as.integer(post_symptom_severity)
   log_df
 }
 
@@ -165,7 +184,6 @@ empty_log_template <- function() {
     symptoms_worsened = logical(0),
     rpe = numeric(0),
     symptom_onset_min = numeric(0),
-    post_symptom_severity = integer(0),
     stringsAsFactors = FALSE
   )
 }

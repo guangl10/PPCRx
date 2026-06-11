@@ -9,10 +9,13 @@ local({
 library(shiny)
 library(bslib)
 library(PPCSexRx)
+library(jsonlite)
 
 # AL_HOOK_v02: returns NA - activate only after IRB approval
 
-for (helper_file in c("pdf_log.R", "plots.R", "bayes.R", "messages.R")) {
+for (helper_file in c(
+  "pdf_log.R", "plots.R", "bayes.R", "messages.R", "pcss_picker.R", "clinical_note_pdf.R"
+)) {
   helper_path <- file.path(getwd(), "R", helper_file)
   if (file.exists(helper_path)) {
     source(helper_path, local = FALSE)
@@ -37,6 +40,17 @@ fuse_tripped_pcss <- function(current_pcss, previous_pcss) {
 
 L <- load_i18n_en()
 
+workflow_section <- function(step, title, subtitle = NULL) {
+  tags$div(
+    class = "workflow-section mb-2",
+    tags$span(class = "workflow-step", step),
+    tags$h5(class = "workflow-title", title),
+    if (!is.null(subtitle) && nzchar(subtitle)) {
+      tags$p(class = "workflow-subtitle text-muted", subtitle)
+    }
+  )
+}
+
 minty_theme <- bs_theme(
   version = 5,
   preset  = "minty",
@@ -51,7 +65,24 @@ clinical_sidebar <- sidebar(
     nav_panel(
       value = "profile",
       title = tagList(icon("user"), L[["nav_profile"]]),
-      numericInput("age", L[["lbl_age"]], value = 16, min = 13, max = 18, step = 1),
+      textInput(
+        "athlete_id",
+        "Athlete ID (optional, for PDF export):",
+        value = "",
+        placeholder = "e.g. JS-2026"
+      ),
+      textInput(
+        "at_name",
+        "Clinician name (for PDF and messages):",
+        value = "",
+        placeholder = "e.g. Jane Smith, AT"
+      ),
+      selectInput(
+        "age",
+        L[["lbl_age"]],
+        choices = setNames(13:18, paste(13:18, "years")),
+        selected = 16
+      ),
       numericInput("days_post_injury", L[["lbl_days_post_injury"]], value = 35, min = 0, step = 1),
       checkboxInput("vestibular_symptoms", L[["lbl_vestibular"]], value = FALSE),
       checkboxInput("cervical_symptoms", L[["lbl_cervical"]], value = FALSE),
@@ -61,16 +92,77 @@ clinical_sidebar <- sidebar(
       value = "prescription",
       title = tagList(icon("file-prescription"), L[["nav_prescription"]]),
       numericInput("hrst", L[["lbl_hrst"]], value = NA, min = 0, step = 1),
-      numericInput("sessions_completed", L[["lbl_sessions_completed"]], value = 0, min = 0, step = 1),
+      helpText(
+        "Measured during Buffalo Concussion Treadmill Test (BCTT). ",
+        "No BCTT available? Leave blank - the app will calculate ",
+        "a safe starting HR using the age-predicted method ",
+        "(Li, 2026). BCTT gives a more precise target."
+      ),
+      selectInput(
+        "sessions_completed",
+        "Sessions completed without worsening",
+        choices = list(
+          "0 (first session or reset)" = 0,
+          "1" = 1,
+          "2" = 2,
+          "3" = 3,
+          "4" = 4,
+          "5 or more" = 5
+        ),
+        selected = 0
+      ),
       checkboxInput("last_session_worse", L[["lbl_last_session_worse"]], value = FALSE)
     ),
     nav_panel(
       value = "progress",
       title = tagList(icon("chart-line"), L[["nav_progress"]]),
-      numericInput("current_pcss", L[["lbl_current_pcss"]], value = NA, min = 0, max = 132, step = 1),
-      numericInput("previous_pcss", L[["lbl_previous_pcss"]], value = NA, min = 0, max = 132, step = 1),
-      numericInput("current_hr", L[["lbl_current_hr"]], value = NA, min = 0, step = 1),
-      numericInput("current_duration", L[["lbl_current_duration"]], value = NA, min = 0, step = 1),
+      textInput(
+        "chief_complaint",
+        "Athlete's main complaint today (optional):",
+        value = "",
+        placeholder = "e.g. headache better, still foggy"
+      ),
+      dateInput(
+        "session_date",
+        label = "Session date:",
+        value = Sys.Date(),
+        format = "yyyy-mm-dd"
+      ),
+      tags$details(
+        class = "pcss-today-details mb-2",
+        open = NA,
+        tags$summary(
+          class = "pcss-today-summary",
+          tags$span("PCSS Today  "),
+          tags$span(
+            textOutput("current_pcss_total_inline", inline = TRUE),
+            class = "text-muted"
+          ),
+          pcss_score_help_icon()
+        ),
+        pcss_picker_ui("current_pcss", "")
+      ),
+      uiOutput("pcss_previous_help"),
+      numericInput(
+        "current_hr",
+        "Heart rate during exercise (bpm)",
+        value = NA,
+        min = 0,
+        step = 1
+      ),
+      helpText(
+        "Average HR from watch or HR monitor. ",
+        "e.g. if watch showed 125-132 bpm, enter 128."
+      ),
+      numericInput(
+        "current_duration",
+        "How long did they exercise? (min)",
+        value = NA,
+        min = 0,
+        max = 20,
+        step = 1
+      ),
+      helpText("Active exercise time only. Maximum recommended: 20 min."),
       sliderInput(
         "rpe",
         "Perceived exertion (Borg RPE 6-20)",
@@ -79,28 +171,17 @@ clinical_sidebar <- sidebar(
         value = 13,
         step = 1
       ),
-      checkboxInput(
-        "full_session",
-        "Completed full 20 min without symptoms",
-        value = FALSE
-      ),
-      numericInput(
-        "symptom_onset_min",
-        "If symptoms occurred, at what minute?",
-        value = NA,
-        min = 0,
-        max = 20,
-        step = 1
-      ),
       radioButtons(
-        "post_symptom_severity",
-        "Symptoms after exercise:",
-        choices = c(
-          "No symptoms" = 0,
-          "Symptoms, resolved within 30 min" = 1,
-          "Symptoms persisted more than 30 min" = 2
+        "symptom_onset_range",
+        "When did symptoms appear?",
+        choices = list(
+          "No symptoms (full session)" = 20,
+          "After 15-19 min" = 17,
+          "After 10-14 min" = 12,
+          "After 5-9 min" = 7,
+          "Within first 5 min" = 3
         ),
-        selected = 0
+        selected = 20
       ),
       helpText(L[["fuse_hint"]])
     )
@@ -117,8 +198,99 @@ ui <- page_sidebar(
   title = tags$span(icon("heart-pulse"), L[["app_title"]]),
   theme = minty_theme,
   sidebar = clinical_sidebar,
+  fillable = FALSE,
   tags$head(
     tags$meta(charset = "UTF-8"),
+    tags$meta(name = "robots", content = "noindex, nofollow"),
+    tags$meta(
+      name = "description",
+      content = "PPCSexRx research prototype for athletic trainers. Not for public indexing."
+    ),
+    tags$style(HTML("
+      .workflow-section {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e9ecef;
+      }
+      .workflow-section:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+      .workflow-step {
+        flex-shrink: 0;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        background: #0d6efd;
+        color: #fff;
+        font-size: 0.85rem;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 0.1rem;
+      }
+      .workflow-title { margin: 0; font-size: 1.1rem; font-weight: 600; }
+      .workflow-subtitle { margin: 0.15rem 0 0; font-size: 0.85rem; }
+      .card-clinical {
+        border: 1px solid #e9ecef;
+        box-shadow: 0 1px 2px rgba(0,0,0,.04);
+      }
+      .card-clinical > .card-header {
+        background: #f8f9fa;
+        color: #212529;
+        font-weight: 600;
+        font-size: 0.95rem;
+        border-bottom: 1px solid #e9ecef;
+        padding: 0.6rem 1rem;
+      }
+      .quickstart-bar { font-size: 0.875rem; }
+      .quickstart-bar ol { margin-bottom: 0; padding-left: 1.25rem; }
+      @media (min-width: 992px) {
+        .quickstart-bar ol { display: flex; gap: 1.5rem; list-style: none; padding-left: 0; }
+        .quickstart-bar li::before { content: counter(step) '. '; counter-increment: step; font-weight: 600; color: #0d6efd; }
+        .quickstart-bar ol { counter-reset: step; }
+      }
+      .pcss-total-value { font-size: 1.4rem; font-weight: bold; }
+      .pcss-picker-more summary { cursor: pointer; }
+      .pcss-today-details summary { cursor: pointer; list-style: disclosure-closed; }
+      .pcss-today-summary { font-weight: 600; }
+      .pcss-symptom-row .shiny-input-radiogroup { margin-bottom: 0; }
+      .pcss-symptom-row .shiny-options-group label {
+        font-size: 0.72rem;
+        margin-right: 0.35rem;
+      }
+      /* Mobile: AT on sideline iPhone (portrait) */
+      @media (max-width: 768px) {
+        .bslib-page-fill .bslib-sidebar-layout {
+          flex-direction: column !important;
+        }
+        .bslib-page-fill .bslib-sidebar-layout > .sidebar,
+        .bslib-page-fill .bslib-sidebar-layout > .main {
+          width: 100% !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+        }
+        .bslib-page-fill .bslib-sidebar-layout > .sidebar {
+          border-right: none !important;
+          border-bottom: 1px solid #dee2e6;
+          max-height: none !important;
+        }
+        .bslib-page-fill .bslib-sidebar-layout > .main {
+          padding-left: 0.75rem !important;
+          padding-right: 0.75rem !important;
+        }
+        .workflow-section { flex-wrap: wrap; }
+        .pcss-symptom-row .col-sm-6 { width: 100% !important; }
+        .pcss-symptom-row .shiny-options-group label {
+          display: inline-block;
+          margin-bottom: 0.25rem;
+        }
+        input.form-control, select.form-select, .shiny-input-container {
+          font-size: 16px;
+        }
+      }
+    ")),
     tags$script(HTML("
       Shiny.addCustomMessageHandler('copyToClipboard', function(text) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -145,72 +317,156 @@ ui <- page_sidebar(
       });
     "))
   ),
-  layout_columns(
-    col_widths = c(12, 6, 6),
-    card(
-      class = "border-info",
-      full_screen = FALSE,
-      card_body(
-        tags$h6(class = "text-info mb-2", icon("list-ol"), " Quick start"),
-        tags$ol(
-          class = "mb-0 small",
-          tags$li(L[["guide_step1"]]),
-          tags$li(L[["guide_step2"]]),
-          tags$li(L[["guide_step3"]])
+  card(
+    class = "border-info mb-3",
+    fill = FALSE,
+    full_screen = FALSE,
+    card_body(
+      class = "py-3",
+      layout_columns(
+        col_widths = c(8, 4),
+        fill = FALSE,
+        tags$div(
+          tags$strong(icon("route"), " Workflow"),
+          tags$ol(
+            class = "small mb-0 mt-1 ps-3",
+            tags$li(L[["guide_step1"]]),
+            tags$li(L[["guide_step2"]]),
+            tags$li(L[["guide_step3"]])
+          )
+        ),
+        tags$div(
+          tags$label(class = "form-label small fw-semibold", icon("flask"), " Quick demo (testing)"),
+          tags$div(
+            class = "d-flex flex-wrap gap-2 align-items-start",
+            tags$div(
+              class = "flex-grow-1",
+              style = "min-width: 12rem;",
+              selectInput(
+                "demo_dataset",
+                label = NULL,
+                choices = c(
+                  "Select demo..." = "",
+                  "Fast recovery" = "dataset1_fast",
+                  "Plateau + RPE rise" = "dataset2_plateau",
+                  "HR adjusted (S5)" = "dataset3_breakthrough"
+                ),
+                selected = "",
+                width = "100%"
+              )
+            ),
+            tags$div(
+              class = "flex-shrink-0 pt-1",
+              actionButton(
+                "load_demo",
+                tagList(icon("database"), " Load demo"),
+                class = "btn-info"
+              )
+            )
+          ),
+          uiOutput("demo_load_status")
+        )
+      )
+    )
+  ),
+
+  navset_card_tab(
+    id = "main_clinical_tabs",
+    height = "auto",
+    nav_panel(
+      title = tagList(icon("clipboard-check"), " Screening & Rx"),
+      value = "tab_rx",
+      layout_columns(
+        col_widths = c(5, 7),
+        fill = FALSE,
+        card(
+          class = "card-clinical",
+          fill = FALSE,
+          full_screen = FALSE,
+          card_header(L[["card_screen"]]),
+          card_body(uiOutput("screen_display"))
+        ),
+        card(
+          class = "card-clinical",
+          fill = FALSE,
+          full_screen = FALSE,
+          card_header(L[["card_target_hr"]]),
+          card_body(uiOutput("target_hr_display"))
+        )
+      ),
+      card(
+        class = "card-clinical mt-3",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header(L[["card_prescription"]]),
+        card_body(tableOutput("prescription_table"))
+      ),
+      card(
+        class = "card-clinical mt-3",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header(L[["fuse_title"]]),
+        card_body(
+          uiOutput("fuse_status"),
+          verbatimTextOutput("fuse_detail", placeholder = TRUE)
         )
       )
     ),
-    card(
-      full_screen = TRUE,
-      card_header(class = "bg-secondary text-white", tags$span(icon("clipboard-check"), L[["card_screen"]])),
-      card_body(uiOutput("screen_display"))
-    ),
-    card(
-      full_screen = TRUE,
-      card_header(class = "bg-primary text-white", tags$span(icon("gauge-high"), L[["card_target_hr"]])),
-      card_body(uiOutput("target_hr_display"))
-    ),
-    card(
-      full_screen = TRUE,
-      card_header(class = "bg-success text-white", tags$span(icon("list-ol"), L[["card_prescription"]])),
-      card_body(tableOutput("prescription_table"))
-    ),
-    card(
-      class = "border-warning",
-      full_screen = FALSE,
-      card_header(class = "bg-warning text-dark", tags$span(icon("bolt"), L[["fuse_title"]])),
-      card_body(
-        uiOutput("fuse_status"),
-        verbatimTextOutput("fuse_detail", placeholder = TRUE)
+    nav_panel(
+      title = tagList(icon("table"), " Session log"),
+      value = "tab_log",
+      card(
+        class = "card-clinical",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header(L[["card_track"]]),
+        card_body(
+          tags$p(
+            class = "text-muted small",
+            "Sidebar ",
+            tags$strong("Progress"),
+            " tab: enter today's session, then ",
+            tags$strong("Run screen / prescribe / track"),
+            " to append a row."
+          ),
+          uiOutput("track_display"),
+          hr(),
+          tags$h6(class = "text-muted small text-uppercase mb-2", "Session history"),
+          div(class = "table-responsive", tableOutput("progress_log_table")),
+          tags$small(class = "text-muted d-block mt-2", L[["disclaimer"]])
+        )
       )
     ),
-    card(
-      full_screen = FALSE,
-      card_header(tags$span(icon("chart-line"), L[["card_track"]])),
-      card_body(
-        uiOutput("track_display"),
-        hr(),
-        tableOutput("progress_log_table"),
-        tags$small(class = "text-muted", L[["disclaimer"]])
+    nav_panel(
+      title = tagList(icon("chart-line"), " Analytics"),
+      value = "tab_analytics",
+      uiOutput("analytics_panel")
+    ),
+    nav_panel(
+      title = tagList(icon("paper-plane"), " Messages"),
+      value = "tab_messages",
+      card(
+        class = "card-clinical",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header("Send to parent / athlete"),
+        card_body(uiOutput("send_to_ui"))
+      ),
+      card(
+        class = "card-clinical mt-3",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header(icon("file-export"), " Export / import"),
+        card_body(uiOutput("clinical_exports_ui"))
       )
-    ),
-    card(
-      full_screen = FALSE,
-      card_header(tags$span(icon("file-export"), "Export / import")),
-      card_body(uiOutput("clinical_exports_ui"))
-    ),
-    card(
-      full_screen = FALSE,
-      card_header(tags$span(icon("comment"), "Send to")),
-      card_body(uiOutput("send_to_ui"))
-    ),
-    uiOutput("analytics_panel")
+    )
   )
 )
 
 server <- function(input, output, session) {
   has_calculated <- reactiveVal(FALSE)
   copy_note <- reactiveVal("")
+  calculating <- reactiveVal(FALSE)
 
   state <- reactiveValues(
     screen       = NULL,
@@ -226,11 +482,64 @@ server <- function(input, output, session) {
     !is.null(log_df) && is.data.frame(log_df) && nrow(log_df) >= 2L
   })
 
-  observeEvent(input$full_session, {
-    if (isTRUE(input$full_session)) {
-      updateNumericInput(session, "symptom_onset_min", value = 20)
+  bayes_result <- reactive({
+    req(show_analytics())
+    generate_bayes_recommendation(
+      ensure_log_schema(state$log),
+      rx_has_bctt(state$rx)
+    )
+  })
+
+  current_pcss_total <- reactive({
+    pcss_compute_total(input, "current_pcss")
+  })
+
+  previous_pcss <- reactive({
+    log <- state$log
+    if (is.null(log) || !is.data.frame(log) || nrow(log) == 0L) {
+      return(NA_real_)
     }
-  }, ignoreInit = TRUE)
+    as.numeric(tail(log$pcss, 1))
+  })
+
+  pcss_picker_output(output, input, "current_pcss")
+
+  output$current_pcss_total_inline <- renderText({
+    current_pcss_total()
+  })
+
+  pdf_template <- reactive({
+    pdf_template_type(state$log)
+  })
+
+  pdf_button_label <- reactive({
+    if (identical(pdf_template(), "soap")) {
+      " Download SOAP Note (Initial)"
+    } else {
+      n <- if (is.null(state$log) || !is.data.frame(state$log)) {
+        1L
+      } else {
+        nrow(state$log)
+      }
+      paste0(" Download DAP Progress Note (Session ", n, ")")
+    }
+  })
+
+  output$pcss_previous_help <- renderUI({
+    prev <- previous_pcss()
+    if (is.null(state$log) || !is.data.frame(state$log) || nrow(state$log) == 0L ||
+        is.na(prev)) {
+      helpText(
+        "First session: safety fuse comparison activates from session 2 onwards."
+      )
+    } else {
+      helpText(paste0(
+        "Last session PCSS: ",
+        prev,
+        " (auto-loaded from session log)"
+      ))
+    }
+  })
 
   observeEvent(input$reset, {
     has_calculated(FALSE)
@@ -241,31 +550,38 @@ server <- function(input, output, session) {
     state$log          <- NULL
     state$fuse_tripped <- FALSE
     state$fuse_message <- ""
-    updateNumericInput(session, "age", value = 16)
+    updateSelectInput(session, "age", selected = 16)
     updateNumericInput(session, "days_post_injury", value = 35)
     updateNumericInput(session, "hrst", value = NA)
-    updateNumericInput(session, "sessions_completed", value = 0)
-    updateNumericInput(session, "current_pcss", value = NA)
-    updateNumericInput(session, "previous_pcss", value = NA)
+    updateSelectInput(session, "sessions_completed", selected = 0)
+    pcss_reset_picker(session, "current_pcss")
     updateNumericInput(session, "current_hr", value = NA)
     updateNumericInput(session, "current_duration", value = NA)
     updateSliderInput(session, "rpe", value = 13)
-    updateCheckboxInput(session, "full_session", value = FALSE)
-    updateNumericInput(session, "symptom_onset_min", value = NA)
-    updateRadioButtons(session, "post_symptom_severity", selected = 0)
+    updateRadioButtons(session, "symptom_onset_range", selected = 20)
     updateCheckboxInput(session, "vestibular_symptoms", value = FALSE)
     updateCheckboxInput(session, "cervical_symptoms", value = FALSE)
     updateCheckboxInput(session, "vision_symptoms", value = FALSE)
     updateCheckboxInput(session, "last_session_worse", value = FALSE)
+    updateDateInput(session, "session_date", value = Sys.Date())
+    updateTextInput(session, "chief_complaint", value = "")
+    updateTextInput(session, "athlete_id", value = "")
+    updateTextInput(session, "at_name", value = "")
   })
 
   observeEvent(input$calc, {
+    if (calculating()) {
+      return()
+    }
+    calculating(TRUE)
+    on.exit(calculating(FALSE))
+
     has_calculated(TRUE)
     state$fuse_tripped <- FALSE
     state$fuse_message <- ""
 
     state$screen <- PPCSexRx::screen_ppcs(
-      age                 = input$age,
+      age                 = as.integer(input$age),
       days_post_injury    = input$days_post_injury,
       vestibular_symptoms = isTRUE(input$vestibular_symptoms),
       cervical_symptoms   = isTRUE(input$cervical_symptoms),
@@ -282,7 +598,7 @@ server <- function(input, output, session) {
     if (length(hrst_val) == 0L || is.na(hrst_val)) hrst_val <- NULL
 
     state$rx <- PPCSexRx::prescribe_ppcs(
-      age                 = input$age,
+      age                 = as.integer(input$age),
       days_post_injury    = input$days_post_injury,
       hrst                = hrst_val,
       vestibular_symptoms = isTRUE(input$vestibular_symptoms),
@@ -291,9 +607,12 @@ server <- function(input, output, session) {
       last_session_worse  = isTRUE(input$last_session_worse)
     )
 
-    state$fuse_tripped <- fuse_tripped_pcss(input$current_pcss, input$previous_pcss)
+    state$fuse_tripped <- fuse_tripped_pcss(
+      current_pcss_total(),
+      previous_pcss()
+    )
     if (state$fuse_tripped) {
-      delta <- as.numeric(input$current_pcss) - as.numeric(input$previous_pcss)
+      delta <- current_pcss_total() - previous_pcss()
       state$fuse_message <- sprintf(
         "PCSS increased by %s (>= 2). Next session prescription locked.",
         format(delta, trim = TRUE)
@@ -303,33 +622,68 @@ server <- function(input, output, session) {
     if (progress_inputs_valid(input$current_hr, input$current_duration)) {
       pkg_log <- NULL
       if (!is.null(state$log) && is.data.frame(state$log) && nrow(state$log) > 0L) {
-        pkg_log <- state$log[, LOG_COLS_REQUIRED, drop = FALSE]
+        log_for_track <- ensure_log_schema(state$log)
+        sess_date <- format_session_date(input$session_date)
+        if (nrow(log_for_track) > 0L && tail(log_for_track$date, 1L) == sess_date) {
+          log_for_track <- log_for_track[-nrow(log_for_track), , drop = FALSE]
+        }
+        if (nrow(log_for_track) > 0L) {
+          pkg_log <- log_for_track[, LOG_COLS_REQUIRED, drop = FALSE]
+        }
       }
       state$track <- PPCSexRx::track_progress(
         log              = pkg_log,
-        current_pcss     = input$current_pcss,
+        current_pcss     = current_pcss_total(),
         current_hr       = input$current_hr,
         current_duration = input$current_duration,
         prescription     = state$rx
       )
-      onset_min <- resolve_symptom_onset_min(
-        input$full_session,
-        input$symptom_onset_min
-      )
+      onset_min <- resolve_symptom_onset_min(input$symptom_onset_range)
       state$log <- append_v02_fields(
         state$track$updated_log,
         rpe = input$rpe,
-        symptom_onset_min = onset_min,
-        post_symptom_severity = input$post_symptom_severity
+        symptom_onset_min = onset_min
       )
+      state$log <- apply_session_date_to_last_row(state$log, input$session_date)
     } else {
       state$track <- NULL
     }
   })
 
+  ensure_screen_and_rx <- function() {
+    state$screen <- PPCSexRx::screen_ppcs(
+      age                 = as.integer(input$age),
+      days_post_injury    = input$days_post_injury,
+      vestibular_symptoms = isTRUE(input$vestibular_symptoms),
+      cervical_symptoms   = isTRUE(input$cervical_symptoms),
+      vision_symptoms     = isTRUE(input$vision_symptoms)
+    )
+    if (!identical(state$screen$status, "eligible")) {
+      state$rx <- NULL
+      return(invisible(FALSE))
+    }
+    hrst_val <- suppressWarnings(as.numeric(input$hrst))
+    if (length(hrst_val) == 0L || is.na(hrst_val)) hrst_val <- NULL
+    state$rx <- PPCSexRx::prescribe_ppcs(
+      age                 = as.integer(input$age),
+      days_post_injury    = input$days_post_injury,
+      hrst                = hrst_val,
+      vestibular_symptoms = isTRUE(input$vestibular_symptoms),
+      cervical_symptoms   = isTRUE(input$cervical_symptoms),
+      sessions_completed  = as.integer(input$sessions_completed),
+      last_session_worse  = isTRUE(input$last_session_worse)
+    )
+    invisible(TRUE)
+  }
+
   output$clinical_exports_ui <- renderUI({
     if (!has_calculated() || is.null(state$rx)) {
-      return(tags$p(class = "text-muted", L[["placeholder"]]))
+      return(tags$p(
+        class = "text-muted small mb-0",
+        "PDF/CSV export and CSV upload appear after ",
+        tags$strong("Run screen / prescribe / track"),
+        " (or load demo above — screening fills automatically)."
+      ))
     }
     cols_help <- paste(LOG_COLS, collapse = ", ")
     tagList(
@@ -337,7 +691,7 @@ server <- function(input, output, session) {
         class = "d-grid gap-2 mb-3",
         downloadButton(
           "download_pdf",
-          tagList(icon("file-pdf"), " Download Prescription PDF"),
+          tagList(icon("file-pdf"), pdf_button_label()),
           class = "btn-success"
         ),
         downloadButton(
@@ -359,6 +713,21 @@ server <- function(input, output, session) {
     )
   })
 
+  output$demo_load_status <- renderUI({
+    log_df <- state$log
+    if (is.null(log_df) || !is.data.frame(log_df) || nrow(log_df) == 0L) {
+      return(NULL)
+    }
+    tags$p(
+      class = "text-success small mb-0",
+      icon("circle-check"),
+        sprintf(
+        " Demo log active: %d session(s). Open the Analytics tab.",
+        nrow(log_df)
+      )
+    )
+  })
+
   output$send_to_ui <- renderUI({
     if (!has_calculated()) {
       return(tags$p(class = "text-muted", L[["placeholder"]]))
@@ -366,7 +735,7 @@ server <- function(input, output, session) {
     screen <- state$screen
     if (!is.null(screen) && identical(screen$status, "needs_referral")) {
       return(tagList(
-        textInput("at_name", "Your name (for messages):", value = ""),
+        tags$p(class = "text-muted small", "Clinician name: set in Profile tab."),
         div(
           class = "d-grid gap-2",
           actionButton(
@@ -393,7 +762,7 @@ server <- function(input, output, session) {
           L[["send_to_fuse_hint"]]
         )
       },
-      textInput("at_name", "Your name (for messages):", value = ""),
+      tags$p(class = "text-muted small mb-2", "Clinician name: set in Profile tab."),
       div(
         class = "d-grid gap-2",
         actionButton(
@@ -464,11 +833,25 @@ server <- function(input, output, session) {
 
   output$download_pdf <- downloadHandler(
     filename = function() {
-      sprintf("PPCSexRx_prescription_%s.pdf", format(Sys.Date(), "%Y%m%d"))
+      tmpl <- pdf_template()
+      date_str <- format_session_date(input$session_date)
+      sn <- if (is.null(state$log) || !is.data.frame(state$log)) {
+        1L
+      } else {
+        nrow(state$log)
+      }
+      pdf_download_filename(
+        tmpl,
+        input$athlete_id,
+        date_str,
+        session_n = sn
+      )
     },
     content = function(file) {
       req(state$rx)
-      tmp <- render_prescription_pdf(state$rx)
+      tmpl <- pdf_template()
+      ctx <- build_clinical_note_context(input, state, tmpl)
+      tmp <- render_clinical_note_pdf(tmpl, ctx)
       file.copy(tmp, file, overwrite = TRUE)
       unlink(tmp)
     }
@@ -487,6 +870,51 @@ server <- function(input, output, session) {
       }
     }
   )
+
+  demo_data_path <- function() {
+    path <- file.path(getwd(), "www", "demo_data.json")
+    if (!file.exists(path)) {
+      stop("Demo data file not found: ", path, call. = FALSE)
+    }
+    path
+  }
+
+  observeEvent(input$load_demo, {
+    req(nzchar(input$demo_dataset))
+
+    demo_json <- tryCatch(
+      jsonlite::fromJSON(demo_data_path(), simplifyDataFrame = TRUE),
+      error = function(e) {
+        showNotification(paste("Demo load error:", e$message), type = "error")
+        NULL
+      }
+    )
+    if (is.null(demo_json)) return()
+
+    selected <- demo_json[[input$demo_dataset]]$data
+    if (is.null(selected) || nrow(selected) == 0L) {
+      showNotification("Demo dataset is empty.", type = "error")
+      return()
+    }
+
+    df <- as.data.frame(selected, stringsAsFactors = FALSE)
+    df$symptoms_worsened <- as.logical(df$symptoms_worsened)
+    state$log <- ensure_log_schema(df)
+
+    has_calculated(TRUE)
+    ensure_screen_and_rx()
+    bslib::nav_select("main_clinical_tabs", "tab_analytics")
+
+    label <- demo_json[[input$demo_dataset]]$label
+    showNotification(
+      paste0(
+        "Demo loaded: ", nrow(state$log), " sessions (", label, "). ",
+        "Open the Analytics tab to view charts."
+      ),
+      type = "message",
+      duration = 5
+    )
+  }, ignoreInit = TRUE)
 
   observeEvent(input$upload_log, {
     req(input$upload_log$datapath)
@@ -539,36 +967,49 @@ server <- function(input, output, session) {
 
   output$analytics_panel <- renderUI({
     if (!show_analytics()) {
-      return(NULL)
+      return(
+        card(
+          class = "card-clinical",
+          fill = FALSE,
+          card_body(
+            class = "py-4",
+            tags$p(
+              class = "text-muted mb-0",
+              icon("chart-area"),
+              " Use ",
+              tags$strong("Load demo"),
+              " at the top of the page, or enter sessions in the Progress sidebar tab and click ",
+              tags$strong("Run screen / prescribe / track"),
+              "."
+            )
+          )
+        )
+      )
     }
     log_df <- state$log
     n_sess <- nrow(log_df)
     layout_columns(
-      col_widths = 12,
+      col_widths = c(8, 4),
+      fill = FALSE,
       card(
-        full_screen = TRUE,
-        card_header("Analytics"),
+        class = "card-clinical",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header(icon("chart-line"), "Recovery trends"),
         card_body(
-          card(
-            card_header("Recovery Trend"),
-            card_body(
-              plotly::plotlyOutput("pcss_trend_plot", height = "360px"),
-              hr(),
-              plotly::plotlyOutput("onset_trend_plot", height = "360px")
-            )
-          ),
-          card(
-            card_header("Prescription Guidance"),
-            card_body(
-              uiOutput("bayes_recommendation"),
-              tags$details(
-                tags$summary("View evidence basis"),
-                tags$p(paste0("Based on ", n_sess, " sessions + published evidence prior")),
-                tags$p("Prior source: Li G. (2026). 7 studies, n~1132. GRADE: LOW certainty."),
-                tags$p("NATA 2024 Bridge Statement: individualize based on symptom response.")
-              )
-            )
-          )
+          plotly::plotlyOutput("pcss_trend_plot", height = "340px"),
+          hr(),
+          plotly::plotlyOutput("onset_trend_plot", height = "300px")
+        )
+      ),
+      card(
+        class = "card-clinical",
+        fill = FALSE,
+        full_screen = FALSE,
+        card_header(icon("lightbulb"), "Prescription guidance"),
+        card_body(
+          uiOutput("bayes_recommendation"),
+          uiOutput("bayes_method_details")
         )
       )
     )
@@ -594,10 +1035,7 @@ server <- function(input, output, session) {
 
   output$bayes_recommendation <- renderUI({
     req(show_analytics())
-    rec <- generate_bayes_recommendation(
-      ensure_log_schema(state$log),
-      rx_has_bctt(state$rx)
-    )
+    rec <- bayes_result()
     alert_class <- switch(
       rec$level,
       info    = "alert-info",
@@ -608,10 +1046,49 @@ server <- function(input, output, session) {
     tags$div(class = paste("alert", alert_class), rec$text)
   })
 
+  output$bayes_method_details <- renderUI({
+    req(show_analytics())
+    rec <- bayes_result()
+    if (is.null(rec$method_text) || !nzchar(rec$method_text)) {
+      return(
+        tags$details(
+          class = "mt-3",
+          tags$summary(class = "small", "View evidence basis"),
+          tags$p(
+            class = "small text-muted mb-0",
+            "Statistical method details appear after 3 or more sessions with valid dates."
+          )
+        )
+      )
+    }
+    tags$details(
+      class = "mt-3",
+      tags$summary(class = "small", "View evidence basis"),
+      tags$pre(
+        class = "small bg-light border rounded p-2 mb-2",
+        style = "white-space: pre-wrap; font-size: 0.8rem; max-height: 320px; overflow-y: auto;",
+        rec$method_text
+      ),
+      tags$p(
+        class = "text-muted small mb-0",
+        "If exercise intensity was adjusted mid-program, interpret with clinical context."
+      )
+    )
+  })
+
+  empty_hint <- function(text) {
+    tags$div(
+      class = "text-muted py-3",
+      icon("circle-info"),
+      " ",
+      text
+    )
+  }
+
   output$screen_display <- renderUI({
     screen <- state$screen
     if (is.null(screen)) {
-      return(tags$p(class = "text-muted", L[["placeholder"]]))
+      return(empty_hint("Click Run screen / prescribe / track, or Load demo above."))
     }
     status_class <- switch(
       screen$status,
@@ -633,7 +1110,7 @@ server <- function(input, output, session) {
   output$target_hr_display <- renderUI({
     rx <- state$rx
     if (is.null(rx)) {
-      return(tags$p(class = "text-muted", L[["placeholder"]]))
+      return(empty_hint("Target HR appears after screening."))
     }
     age_pred <- grepl("age-predicted", rx$method, ignore.case = TRUE)
     tags$div(
@@ -642,8 +1119,9 @@ server <- function(input, output, session) {
       if (age_pred) {
         tags$p(
           class = "small text-muted mt-3 mb-0",
-          "Note: Li (2026) recommends starting at 50% HRmax when BCTT is unavailable. ",
-          "Current value uses package default (60-70% HRmax)."
+          "When BCTT is unavailable, the app uses age-predicted HRmax x 65% (package default). ",
+          "Li (2026) CAT recommends starting at 50% HRmax; ",
+          "this discrepancy will be resolved in PPCSexRx v0.2.0."
         )
       }
     )
@@ -651,7 +1129,11 @@ server <- function(input, output, session) {
 
   output$prescription_table <- renderTable({
     if (is.null(state$rx)) {
-      return(data.frame(Field = L[["placeholder"]], Value = L[["placeholder"]]))
+      return(data.frame(
+        Field = "Waiting for prescription",
+        Value = "Run screen / prescribe / track",
+        stringsAsFactors = FALSE
+      ))
     }
     rx <- state$rx
     data.frame(
@@ -679,7 +1161,7 @@ server <- function(input, output, session) {
 
   output$fuse_status <- renderUI({
     if (is.null(state$screen) && is.null(state$rx)) {
-      return(tags$p(class = "text-muted", L[["placeholder"]]))
+      return(empty_hint("PCSS fuse activates when you log sessions in Progress."))
     }
     if (isTRUE(state$fuse_tripped)) {
       return(tags$div(
@@ -705,9 +1187,9 @@ server <- function(input, output, session) {
       return(tags$p(class = "text-warning", icon("lock"), L[["rx_locked"]]))
     }
     track <- state$track
-    if (is.null(track)) {
-      return(tags$p(class = "text-muted", L[["placeholder"]]))
-    }
+      if (is.null(track)) {
+        return(empty_hint("Latest session summary appears after Calculate with Progress data."))
+      }
     tags$div(
       tags$p(tags$strong("Phase: "), track$phase),
       tags$p(tags$strong("Recommendation: "), track$recommendation),
@@ -730,7 +1212,6 @@ server <- function(input, output, session) {
         symptoms_worsened = ph,
         rpe = ph,
         symptom_onset_min = ph,
-        post_symptom_severity = ph,
         check.names = FALSE
       ))
     }
