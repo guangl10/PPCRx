@@ -1,4 +1,4 @@
-# PPCSexRx Shiny App v0.2 - Athletic Trainer clinical tool
+# PPCSexRx Shiny App v0.2.1 - Athletic Trainer clinical tool
 options(encoding = "UTF-8")
 
 local({
@@ -14,7 +14,8 @@ library(jsonlite)
 # AL_HOOK_v02: returns NA - activate only after IRB approval
 
 for (helper_file in c(
-  "pdf_log.R", "plots.R", "bayes.R", "messages.R", "pcss_picker.R", "clinical_note_pdf.R"
+  "pdf_log.R", "plots.R", "bayes.R", "messages.R", "pcss_picker.R",
+  "clinical_note_pdf.R", "draft_storage.R"
 )) {
   helper_path <- file.path(getwd(), "R", helper_file)
   if (file.exists(helper_path)) {
@@ -116,6 +117,7 @@ clinical_sidebar <- sidebar(
     nav_panel(
       value = "progress",
       title = tagList(icon("chart-line"), L[["nav_progress"]]),
+      uiOutput("target_hr_sticky"),
       textInput(
         "chief_complaint",
         "Athlete's main complaint today (optional):",
@@ -183,7 +185,22 @@ clinical_sidebar <- sidebar(
         ),
         selected = 20
       ),
-      helpText(L[["fuse_hint"]])
+      helpText(L[["fuse_hint"]]),
+      tags$hr(),
+      tags$p(
+        class = "text-muted small mb-2",
+        tags$strong("Local save: "),
+        "Session data is saved on this device only. Do not use a shared device. Clear data after export."
+      ),
+      actionButton(
+        "end_session",
+        tagList(icon("flag-checkered"), " End session (CSV, then message)"),
+        class = "btn-success w-100"
+      ),
+      tags$p(
+        class = "text-muted small mt-2 mb-0",
+        "Export CSV to your records system to complete the session."
+      )
     )
   ),
   hr(),
@@ -206,6 +223,8 @@ ui <- page_sidebar(
       name = "description",
       content = "PPCSexRx research prototype for athletic trainers. Not for public indexing."
     ),
+    tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
+    tags$script(src = "ppcrx_client.js"),
     tags$style(HTML("
       .workflow-section {
         display: flex;
@@ -260,6 +279,28 @@ ui <- page_sidebar(
         font-size: 0.72rem;
         margin-right: 0.35rem;
       }
+      .pcss-symptom-new {
+        background: #f8d7da;
+        border-radius: 0.35rem;
+        padding: 0.25rem 0.35rem;
+        border: 1px solid #f1aeb5;
+      }
+      .target-hr-sticky {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: #cfe2ff;
+        border: 1px solid #9ec5fe;
+        border-radius: 0.375rem;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+        font-size: 1rem;
+      }
+      .shiny-input-container input[type='checkbox'] {
+        min-width: 1.25rem;
+        min-height: 1.25rem;
+      }
       /* Mobile: AT on sideline iPhone (portrait) */
       @media (max-width: 768px) {
         .bslib-page-fill .bslib-sidebar-layout {
@@ -288,6 +329,16 @@ ui <- page_sidebar(
         }
         input.form-control, select.form-select, .shiny-input-container {
           font-size: 16px;
+        }
+        .pcss-symptom-row .shiny-options-group label {
+          margin-right: 0.5rem;
+          padding: 0.35rem 0.15rem;
+        }
+        #rpe .irs { margin-top: 0.5rem; margin-bottom: 1.75rem; }
+        #rpe .irs-handle {
+          width: 28px;
+          height: 28px;
+          top: 18px;
         }
       }
     ")),
@@ -474,107 +525,38 @@ server <- function(input, output, session) {
     track        = NULL,
     log          = NULL,
     fuse_tripped = FALSE,
-    fuse_message = ""
+    fuse_message = "",
+    pcss_baseline = rep(0L, PCSS_SYMPTOM_COUNT),
+    last_pcss_scores = rep(0L, PCSS_SYMPTOM_COUNT)
   )
 
-  show_analytics <- reactive({
-    log_df <- state$log
-    !is.null(log_df) && is.data.frame(log_df) && nrow(log_df) >= 2L
-  })
+  pcss_new_acknowledged <- reactiveVal(FALSE)
 
-  bayes_result <- reactive({
-    req(show_analytics())
-    generate_bayes_recommendation(
-      ensure_log_schema(state$log),
-      rx_has_bctt(state$rx)
-    )
-  })
+  save_draft <- function() {
+    payload <- build_draft_payload(input, state, has_calculated())
+    session$sendCustomMessage("ppcrxSaveDraft", payload)
+  }
 
-  current_pcss_total <- reactive({
-    pcss_compute_total(input, "current_pcss")
-  })
-
-  previous_pcss <- reactive({
-    log <- state$log
-    if (is.null(log) || !is.data.frame(log) || nrow(log) == 0L) {
-      return(NA_real_)
+  pcss_delta_blocked <- function() {
+    baseline <- state$pcss_baseline
+    current <- pcss_read_scores(input, "current_pcss")
+    idx <- pcss_new_symptom_indices(baseline, current)
+    if (length(idx) == 0L) {
+      return(FALSE)
     }
-    as.numeric(tail(log$pcss, 1))
-  })
+    session$sendCustomMessage("ppcrxHighlightPcss", as.list(idx))
+    !isTRUE(input$pcss_new_symptoms_ack)
+  }
 
-  pcss_picker_output(output, input, "current_pcss")
-
-  output$current_pcss_total_inline <- renderText({
-    current_pcss_total()
-  })
-
-  pdf_template <- reactive({
-    pdf_template_type(state$log)
-  })
-
-  pdf_button_label <- reactive({
-    if (identical(pdf_template(), "soap")) {
-      " Download SOAP Note (Initial)"
-    } else {
-      n <- if (is.null(state$log) || !is.data.frame(state$log)) {
-        1L
-      } else {
-        nrow(state$log)
-      }
-      paste0(" Download DAP Progress Note (Session ", n, ")")
-    }
-  })
-
-  output$pcss_previous_help <- renderUI({
-    prev <- previous_pcss()
-    if (is.null(state$log) || !is.data.frame(state$log) || nrow(state$log) == 0L ||
-        is.na(prev)) {
-      helpText(
-        "First session: safety fuse comparison activates from session 2 onwards."
+  perform_calculate <- function() {
+    if (pcss_delta_blocked()) {
+      showNotification(
+        "New symptoms detected. Review with the athlete and check the confirmation box.",
+        type = "error",
+        duration = 8
       )
-    } else {
-      helpText(paste0(
-        "Last session PCSS: ",
-        prev,
-        " (auto-loaded from session log)"
-      ))
+      return(invisible(FALSE))
     }
-  })
-
-  observeEvent(input$reset, {
-    has_calculated(FALSE)
-    copy_note("")
-    state$screen       <- NULL
-    state$rx           <- NULL
-    state$track        <- NULL
-    state$log          <- NULL
-    state$fuse_tripped <- FALSE
-    state$fuse_message <- ""
-    updateSelectInput(session, "age", selected = 16)
-    updateNumericInput(session, "days_post_injury", value = 35)
-    updateNumericInput(session, "hrst", value = NA)
-    updateSelectInput(session, "sessions_completed", selected = 0)
-    pcss_reset_picker(session, "current_pcss")
-    updateNumericInput(session, "current_hr", value = NA)
-    updateNumericInput(session, "current_duration", value = NA)
-    updateSliderInput(session, "rpe", value = 13)
-    updateRadioButtons(session, "symptom_onset_range", selected = 20)
-    updateCheckboxInput(session, "vestibular_symptoms", value = FALSE)
-    updateCheckboxInput(session, "cervical_symptoms", value = FALSE)
-    updateCheckboxInput(session, "vision_symptoms", value = FALSE)
-    updateCheckboxInput(session, "last_session_worse", value = FALSE)
-    updateDateInput(session, "session_date", value = Sys.Date())
-    updateTextInput(session, "chief_complaint", value = "")
-    updateTextInput(session, "athlete_id", value = "")
-    updateTextInput(session, "at_name", value = "")
-  })
-
-  observeEvent(input$calc, {
-    if (calculating()) {
-      return()
-    }
-    calculating(TRUE)
-    on.exit(calculating(FALSE))
 
     has_calculated(TRUE)
     state$fuse_tripped <- FALSE
@@ -591,7 +573,8 @@ server <- function(input, output, session) {
     if (!identical(state$screen$status, "eligible")) {
       state$rx    <- NULL
       state$track <- NULL
-      return()
+      save_draft()
+      return(invisible(FALSE))
     }
 
     hrst_val <- suppressWarnings(as.numeric(input$hrst))
@@ -648,7 +631,218 @@ server <- function(input, output, session) {
     } else {
       state$track <- NULL
     }
+
+    scores <- pcss_read_scores(input, "current_pcss")
+    state$last_pcss_scores <- scores
+    state$pcss_baseline <- scores
+    pcss_new_acknowledged(FALSE)
+    save_draft()
+    invisible(TRUE)
+  }
+
+  show_analytics <- reactive({
+    log_df <- state$log
+    !is.null(log_df) && is.data.frame(log_df) && nrow(log_df) >= 2L
   })
+
+  bayes_result <- reactive({
+    req(show_analytics())
+    generate_bayes_recommendation(
+      ensure_log_schema(state$log),
+      rx_has_bctt(state$rx)
+    )
+  })
+
+  current_pcss_total <- reactive({
+    pcss_compute_total(input, "current_pcss")
+  })
+
+  previous_pcss <- reactive({
+    log <- state$log
+    if (is.null(log) || !is.data.frame(log) || nrow(log) == 0L) {
+      return(NA_real_)
+    }
+    as.numeric(tail(log$pcss, 1))
+  })
+
+  pcss_picker_output(
+    output,
+    input,
+    "current_pcss",
+    reactive(state$pcss_baseline),
+    pcss_new_acknowledged
+  )
+
+  output$target_hr_sticky <- renderUI({
+    if (!has_calculated() || is.null(state$rx)) {
+      return(NULL)
+    }
+    tags$div(
+      class = "target-hr-sticky",
+      icon("heart-pulse"),
+      " Target HR: ",
+      tags$span(as.integer(state$rx$target_hr), class = "text-primary"),
+      " bpm"
+    )
+  })
+
+  output$current_pcss_total_inline <- renderText({
+    current_pcss_total()
+  })
+
+  pdf_template <- reactive({
+    pdf_template_type(state$log)
+  })
+
+  pdf_button_label <- reactive({
+    if (identical(pdf_template(), "soap")) {
+      " Download SOAP Note (Initial)"
+    } else {
+      n <- if (is.null(state$log) || !is.data.frame(state$log)) {
+        1L
+      } else {
+        nrow(state$log)
+      }
+      paste0(" Download DAP Progress Note (Session ", n, ")")
+    }
+  })
+
+  output$pcss_previous_help <- renderUI({
+    prev <- previous_pcss()
+    if (is.null(state$log) || !is.data.frame(state$log) || nrow(state$log) == 0L ||
+        is.na(prev)) {
+      helpText(
+        "First session: safety fuse comparison activates from session 2 onwards."
+      )
+    } else {
+      helpText(paste0(
+        "Last session PCSS: ",
+        prev,
+        " (auto-loaded from session log)"
+      ))
+    }
+  })
+
+  observeEvent(input$reset, {
+    has_calculated(FALSE)
+    copy_note("")
+    state$screen       <- NULL
+    state$rx           <- NULL
+    state$track        <- NULL
+    state$log          <- NULL
+    state$fuse_tripped <- FALSE
+    state$fuse_message <- ""
+    state$pcss_baseline <- rep(0L, PCSS_SYMPTOM_COUNT)
+    state$last_pcss_scores <- rep(0L, PCSS_SYMPTOM_COUNT)
+    pcss_new_acknowledged(FALSE)
+    session$sendCustomMessage("ppcrxClearDraft", list())
+    updateSelectInput(session, "age", selected = 16)
+    updateNumericInput(session, "days_post_injury", value = 35)
+    updateNumericInput(session, "hrst", value = NA)
+    updateSelectInput(session, "sessions_completed", selected = 0)
+    pcss_reset_picker(session, "current_pcss")
+    updateNumericInput(session, "current_hr", value = NA)
+    updateNumericInput(session, "current_duration", value = NA)
+    updateSliderInput(session, "rpe", value = 13)
+    updateRadioButtons(session, "symptom_onset_range", selected = 20)
+    updateCheckboxInput(session, "vestibular_symptoms", value = FALSE)
+    updateCheckboxInput(session, "cervical_symptoms", value = FALSE)
+    updateCheckboxInput(session, "vision_symptoms", value = FALSE)
+    updateCheckboxInput(session, "last_session_worse", value = FALSE)
+    updateDateInput(session, "session_date", value = Sys.Date())
+    updateTextInput(session, "chief_complaint", value = "")
+    updateTextInput(session, "athlete_id", value = "")
+    updateTextInput(session, "at_name", value = "")
+  })
+
+  observeEvent(input$calc, {
+    if (calculating()) {
+      return()
+    }
+    calculating(TRUE)
+    on.exit(calculating(FALSE))
+    perform_calculate()
+  })
+
+  observeEvent(input$current_pcss_same_as_last, {
+    scores <- state$last_pcss_scores
+    if (all(scores == 0L)) {
+      showNotification(
+        "No previous PCSS item scores on this device. Enter symptoms or restore a saved session.",
+        type = "warning",
+        duration = 6
+      )
+      return()
+    }
+    pcss_apply_scores(session, "current_pcss", scores)
+    pcss_new_acknowledged(FALSE)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$pcss_new_symptoms_ack, {
+    pcss_new_acknowledged(isTRUE(input$pcss_new_symptoms_ack))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$ppcrx_restore_draft, {
+    draft <- input$ppcrx_restore_draft
+    req(is.list(draft))
+    restore_draft_to_session(session, draft, state, has_calculated)
+    if (isTRUE(draft$hasCalculated)) {
+      ensure_screen_and_rx()
+      if (isTRUE(draft$fuseTripped)) {
+        state$fuse_tripped <- TRUE
+      }
+    }
+    showNotification("Restored session draft from this device.", type = "message", duration = 4)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$end_session, {
+    if (calculating()) {
+      return()
+    }
+    calculating(TRUE)
+    on.exit(calculating(FALSE))
+
+    if (!has_calculated()) {
+      if (!isTRUE(perform_calculate())) {
+        return()
+      }
+    } else if (pcss_delta_blocked()) {
+      showNotification(
+        "New symptoms detected. Review with the athlete and check the confirmation box.",
+        type = "error",
+        duration = 8
+      )
+      return()
+    }
+    if (!has_calculated() || is.null(state$rx)) {
+      showNotification("Complete screening and progress fields before ending session.", type = "error")
+      return()
+    }
+    if (is.null(state$log) || !is.data.frame(state$log) || nrow(state$log) == 0L) {
+      showNotification("Enter HR and duration, then Calculate, before ending session.", type = "error")
+      return()
+    }
+    session$sendCustomMessage("ppcrxEndSession", list(delayMs = 700))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$end_session_after_csv, {
+    req(state$rx)
+    at_name <- if (is.null(input$at_name)) "" else input$at_name
+    msg <- generate_parent_message(state$rx, at_name, fuse_tripped = state$fuse_tripped)
+    session$sendCustomMessage("copyToClipboard", msg)
+    copy_note(
+      if (isTRUE(state$fuse_tripped)) {
+        "CSV download triggered. Parent safety notice copied."
+      } else {
+        "CSV download triggered. Parent message copied."
+      }
+    )
+    showNotification(
+      "Session exported to CSV. Optional: download SOAP/DAP PDF from Export tab.",
+      type = "message",
+      duration = 8
+    )
+  }, ignoreInit = TRUE)
 
   ensure_screen_and_rx <- function() {
     state$screen <- PPCSexRx::screen_ppcs(
@@ -859,7 +1053,7 @@ server <- function(input, output, session) {
 
   output$download_csv <- downloadHandler(
     filename = function() {
-      sprintf("PPCSexRx_session_log_%s.csv", format(Sys.Date(), "%Y%m%d"))
+      csv_session_filename(input$athlete_id, input$session_date)
     },
     content = function(file) {
       log_df <- state$log
@@ -939,9 +1133,23 @@ server <- function(input, output, session) {
     )
     if (is.null(df)) return()
     state$log <- df
+    draft_age <- NULL
+    if (!is.null(input$ppcrx_restore_draft) && is.list(input$ppcrx_restore_draft)) {
+      prof <- input$ppcrx_restore_draft$profile
+      if (is.list(prof) && !is.null(prof$age) && !is.na(prof$age)) {
+        draft_age <- as.integer(prof$age)
+      }
+    }
+    if (!is.null(draft_age)) {
+      updateSelectInput(session, "age", selected = as.character(draft_age))
+    }
     showNotification(
-      sprintf("Loaded %d session(s) from CSV.", nrow(df)),
-      type = "message"
+      paste0(
+        "Loaded ", nrow(df), " session(s) from CSV. ",
+        "Confirm age and days post-injury in Profile; sessions append on Calculate."
+      ),
+      type = "message",
+      duration = 6
     )
   }, ignoreInit = TRUE)
 
